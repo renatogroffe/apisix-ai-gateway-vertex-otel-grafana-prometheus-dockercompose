@@ -1,0 +1,164 @@
+@APISIX_ADMIN_KEY=edd1c9f034335f136f87ad84b625c8f1
+@CLIENT_API_KEY=abcdefghijk2026xyz
+@CLIENT_API_KEY_2=abcdefghijk2026xyzmno
+@MODEL_NAME=gemini-2.5-flash
+@ROUTE_APISIX=/google/vertex-ai
+@VERTEX_PROJECT_ID=GOOGLE_CLOUD_PROJECT_ID
+@VERTEX_CLIENT_EMAIL=vertex-express@GOOGLE_CLOUD_PROJECT_ID.iam.gserviceaccount.com
+@VERTEX_PRIVATE_KEY_ID=GOOGLE_CLOUD_PRIVATE_KEY_ID
+@VERTEX_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\nGOOGLE_CLOUD_PRIVATE_KEY\n-----END PRIVATE KEY-----\n
+
+###
+###
+# PASSO 1: Configurar traces do APISIX para OpenTelemetry
+curl http://127.0.0.1:9180/apisix/admin/plugin_metadata/opentelemetry -H "X-API-KEY: {{APISIX_ADMIN_KEY}}" -X PUT -d '
+{
+    "trace_id_source": "x-request-id",
+    "resource": {
+      "service.name": "APISIX",
+      "deployment.environment.name": "development"
+    },
+    "collector": {
+      "address": "alloy:4318",
+      "request_timeout": 3,
+      "request_headers": {
+      }
+    },
+    "batch_span_processor": {
+      "drop_on_queue_full": false,
+      "max_queue_size": 1024,
+      "batch_timeout": 2,
+      "inactive_timeout": 1,
+      "max_export_batch_size": 16
+    },
+    "set_ngx_var": false
+}'
+
+
+###
+# PASSO 2: Criar o Consumer com a API Key do cliente.
+curl "http://127.0.0.1:9180/apisix/admin/consumers" -X PUT \
+  -H "X-API-KEY: {{APISIX_ADMIN_KEY}}" \
+  -d '{
+    "username": "consoleappchatai",
+    "plugins": {
+      "key-auth": {
+        "key": "{{CLIENT_API_KEY}}"
+      }
+    }
+  }'
+
+
+###
+# PASSO 3: Criar segundo Consumer com a API Key do cliente.
+curl "http://127.0.0.1:9180/apisix/admin/consumers" -X PUT \
+  -H "X-API-KEY: {{APISIX_ADMIN_KEY}}" \
+  -d '{
+    "username": "consoleappchatai2",
+    "plugins": {
+      "key-auth": {
+        "key": "{{CLIENT_API_KEY_2}}"
+      }
+    }
+  }'
+
+
+###
+# PASSO 4: Criar a rota exigindo a API Key do cliente.
+
+curl "http://127.0.0.1:9180/apisix/admin/routes" -X PUT \
+  -H "X-API-KEY: {{APISIX_ADMIN_KEY}}" \
+  -d '{
+    "id": "google-ai-vertex-test",
+    "uri": "{{ROUTE_APISIX}}/{{MODEL_NAME}}/*",
+    "methods": ["POST"],
+    "plugins": {
+      "key-auth": {},
+      "consumer-restriction": {
+          "whitelist": [
+              "consoleappchatai"
+          ]
+      },
+      "ai-prompt-guard": {
+        "deny_patterns": ["(?i)AWS", "(?i)Amazon", "(?i)Oracle"]
+      },
+      "opentelemetry": {
+        "sampler": {
+          "name": "always_on"
+        }
+      },
+      "ai-proxy": {
+        "provider": "vertex-ai",
+        "auth": {
+          "gcp": {
+            "service_account_json": "{\"type\":\"service_account\",\"project_id\":\"{{VERTEX_PROJECT_ID}}\",\"private_key_id\":\"{{VERTEX_PRIVATE_KEY_ID}}\",\"private_key\":\"{{VERTEX_PRIVATE_KEY}}\",\"client_email\":\"{{VERTEX_CLIENT_EMAIL}}\"}"
+          },
+          "header": {
+            "Accept-Encoding": "identity"
+          }
+        },
+        "options":{
+          "model": "google/{{MODEL_NAME}}"
+        },
+        "override": {
+          "endpoint": "https://aiplatform.googleapis.com/v1/projects/{{VERTEX_PROJECT_ID}}/locations/global/endpoints/openapi/chat/completions"
+        }
+      }
+    },
+    "upstream": {
+      "type": "roundrobin",
+      "nodes": {
+        "httpbin.org": 1
+      }
+    }
+  }'
+
+
+###
+# PASSO 5: Testes
+
+curl http://localhost:9080/google/vertex-ai/gemini-2.5-flash/ \
+  -X POST \
+  -H "apikey: {{CLIENT_API_KEY}}" \
+  -H "Content-Type: application/json" \
+  -d '{
+       "messages": [
+         {"role": "user", "content": "Explique o que é Kubernetes em poucas palavras..."}
+       ]
+  }'
+
+###
+
+curl http://localhost:9080/google/vertex-ai/gemini-2.5-flash/ \
+  -X POST \
+  -H "apikey: {{CLIENT_API_KEY_2}}" \
+  -H "Content-Type: application/json" \
+  -d '{
+       "messages": [
+         {"role": "user", "content": "Explique o que é Kubernetes em poucas palavras..."}
+       ]
+  }'
+
+###
+
+curl http://localhost:9080/google/vertex-ai/gemini-2.5-flash/ \
+  -X POST \
+  -H "apikey: {{CLIENT_API_KEY}}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      { "role": "user", "content": "Fale resumidamente sobre Aws" }
+    ]
+  }'
+
+###
+
+curl http://localhost:9080/google/vertex-ai/gemini-2.5-flash/ \
+  -X POST \
+  -H "apikey: {{CLIENT_API_KEY}}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      { "role": "user", "content": "Fale resumidamente sobre Amazon Web Services" }
+    ]
+  }'
