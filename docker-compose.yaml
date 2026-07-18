@@ -5,8 +5,6 @@ services:
     restart: always
     volumes:
       - ./apisix_conf/master/config.yaml:/usr/local/apisix/conf/config.yaml:ro
-    environment:
-      MICROSOFT_FOUNDRY_API_KEY: "${MICROSOFT_FOUNDRY_API_KEY}"
     depends_on:
       etcd:
         condition: service_healthy
